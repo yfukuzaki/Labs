@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>カラム精製・分子シミュレーター</title>
+    <style>
+        /* 基本レイアウトの設定 */
+        body { background: #cfd8dc; font-family: 'Meiryo', sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .main-container { display: flex; gap: 30px; background: #ffffff; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
+        
+        /* カラム（筒）の外観パーツ */
+        .column-box { position: relative; width: 160px; display: flex; flex-direction: column; align-items: center; }
+        .tube-top { width: 110px; height: 20px; background: #FFEB3B; border: 2px solid #555; border-radius: 5px 5px 0 0; }
+        .tube { width: 100px; height: 480px; border-left: 3px solid #555; border-right: 3px solid #555; background: #fff; position: relative; overflow: hidden; }
+        .tube-bottom { width: 110px; height: 20px; background: #FFEB3B; border: 2px solid #555; border-radius: 0 0 5px 5px; z-index: 2; }
+        
+        /* コック（蛇口）と先端のパーツ */
+        .cock-body { width: 24px; height: 30px; background: #ddd; border: 2px solid #555; margin-top: -2px; position: relative; }
+        .cock-handle { width: 45px; height: 10px; background: #444; border-radius: 5px; position: absolute; top: 10px; left: -12px; transition: transform 0.3s ease; transform: rotate(0deg); }
+        .tip { width: 8px; height: 25px; background: #bbb; border: 1px solid #555; border-top: none; }
+        
+        /* 描画用キャンバス：カラムの上に重ねて表示 */
+        canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+        
+        /* 操作パネルのスタイル */
+        .panel { width: 420px; display: flex; flex-direction: column; gap: 10px; }
+        .group { border: 1px solid #e0e0e0; padding: 15px; border-radius: 10px; background: #fafafa; }
+        .group-title { font-weight: bold; margin-bottom: 10px; color: #333; border-left: 5px solid #1e88e5; padding-left: 10px; }
+        .slider-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 0.85em; margin-bottom: 8px; }
+        
+        /* スライダーとpHインジケーター（三角形） */
+        .slider-wrapper { position: relative; flex: 1; display: flex; align-items: center; padding-top: 10px; }
+        input[type="range"] { width: 100%; cursor: pointer; margin: 0; }
+        .ph-marker { position: absolute; top: 0; width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 8px solid #1e88e5; transform: translateX(-50%); pointer-events: none; transition: left 0.1s ease-out; z-index: 10; }
+        
+        /* 数値表示と電荷アイコン */
+        b { width: 55px; text-align: right; color: #1e88e5; }
+        .charge-icon { width: 30px; font-weight: bold; font-size: 1.2em; text-align: center; display: inline-block; margin-left: 5px; }
+        
+        /* 操作ボタン */
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+        button { padding: 12px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; color: white; }
+        .btn-start { background: #43a047; }
+        .btn-stop { background: #e53935; }
+        .btn-elute { background: #1e88e5; grid-column: span 2; }
+    </style>
+</head>
+<body>
+
+<h1>カラム精製・分子シミュレーター</h1>
+
+<div class="main-container">
+    <div class="column-box">
+        <div class="tube-top"></div>
+        <div class="tube"><canvas id="colCanvas"></canvas></div>
+        <div class="tube-bottom"></div>
+        <div class="cock-body"><div id="cock-handle" class="cock-handle"></div></div>
+        <div class="tip"></div>
+        <div id="resin-label" style="margin-top:15px; font-weight:bold; font-size: 0.8em; text-align: center;"></div>
+    </div>
+
+    <div class="panel">
+        <div class="group">
+            <div class="group-title">1. カラム設定</div>
+            <div class="slider-row">
+                <span>交換基:</span>
+                <select id="resin-select" onchange="initExperiment()">
+                    <option value="cation">陽イオン交換 (樹脂 －)</option>
+                    <option value="anion">陰イオン交換 (樹脂 ＋)</option>
+                </select>
+            </div>
+            <div class="slider-row">
+                <span>サンプル集団数:</span>
+                <input type="range" id="sample-count" min="1" max="5" value="3" onchange="initExperiment()">
+                <b id="count-txt">3</b>
+            </div>
+        </div>
+
+        <div class="group">
+            <div class="group-title">2. 移動相・溶出条件</div>
+            <div class="slider-row">
+                <span>バッファー pH:</span>
+                <div class="slider-wrapper">
+                    <div id="main-ph-marker" class="ph-marker"></div>
+                    <input type="range" id="ph-input" min="2" max="12" step="0.1" value="7.0" oninput="updateAllCharges()">
+                </div>
+                <b id="ph-txt">7.0</b>
+            </div>
+            <div class="slider-row"><span>NaCl (mM):</span><input type="range" id="nacl-input" min="0" max="500" step="10" value="0"><b id="nacl-txt">0</b></div>
+            <div class="slider-row"><span>流速倍率:</span><input type="range" id="flow-input" min="0" max="3" step="0.1" value="1.0"><b id="flow-txt">1.0 x</b></div>
+        </div>
+
+        <div class="group"><div id="pi-sliders"></div></div>
+
+        <div class="btn-grid">
+            <button class="btn-start" onclick="toggleFlow(true)">コックを開ける</button>
+            <button class="btn-stop" onclick="toggleFlow(false)">コックを閉じる</button>
+            <button class="btn-elute" onclick="startElution()">NaCl 溶出</button>
+            <button style="background:#78909c; grid-column:span 2;" onclick="initExperiment()">リセット</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // キャンバスと描画コンテキストの取得
+    const canvas = document.getElementById('colCanvas');
+    const ctx = canvas.getContext('2d');
+    
+    // シミュレーションの状態管理用変数
+    let proteinGroups = [], beads = [], naclParticles = [], isFlowing = false;
+    let waveOffset = 0, glowTimer = 0;
+    
+    // 定数：各サンプルの色、基本速度、電荷の色
+    const COLORS = ['#FF9800', '#9C27B0', '#4CAF50', '#F44336', '#607D8B'];
+    const BASE_SPEED = 0.4;
+    const CHARGE_RED = "#e53935";   // 正電荷用
+    const CHARGE_BLUE = "#1e88e5";  // 負電荷用
+    const NEUTRAL_GRAY = "#9e9e9e"; // 中性用
+    const PARTICLES_PER_GROUP = 30; // 1グループあたりの分子数
+
+    /**
+     * 実験の初期化：樹脂の配置、タンパク質スライダーの生成、分子の配置
+     */
+    function initExperiment() {
+        isFlowing = false;
+        canvas.width = 100; canvas.height = 480;
+        const count = parseInt(document.getElementById('sample-count').value);
+        document.getElementById('count-txt').innerText = count;
+        document.getElementById('cock-handle').style.transform = "rotate(0deg)";
+
+        // カラム内の樹脂ビーズをグリッド状に配置（少しランダムさを加える）
+        beads = [];
+        const xGap = 28, yGap = 32;
+        for(let y = 50; y < 470; y += yGap) {
+            let xOffset = (Math.floor(y/yGap) % 2 === 0) ? 0 : 14;
+            for(let x = 18; x < 95; x += xGap) {
+                beads.push({ x: x + xOffset + (Math.random()-0.5)*5, y: y + (Math.random()-0.5)*5 });
+            }
+        }
+
+        // タンパク質pI操作用スライダーの動的生成
+        const piBox = document.getElementById('pi-sliders');
+        piBox.innerHTML = '<div class="group-title">3. タンパク質 pI</div>'; 
+        proteinGroups = [];
+        for(let i=0; i<count; i++) {
+            const char = String.fromCharCode(65 + i);
+            const defaultPI = 4 + (i * 2);
+            piBox.innerHTML += `
+                <div class="slider-row">
+                    <span>${char} (pI):</span>
+                    <div class="slider-wrapper">
+                        <div class="ph-marker ph-ref-marker" id="ph-marker-${i}"></div>
+                        <input type="range" id="pi-${i}" min="2" max="12" step="0.1" value="${defaultPI}" oninput="updatePI(${i},this.value)">
+                    </div>
+                    <b id="pi-txt-${i}">${defaultPI.toFixed(1)}</b>
+                    <span id="charge-${i}" class="charge-icon">±</span>
+                </div>`;
+            
+            // 各タンパク質グループ内の分子（粒子）データを生成
+            let particles = [];
+            for(let j=0; j<PARTICLES_PER_GROUP; j++) {
+                particles.push({
+                    x: 50 + (Math.random()-0.5)*40,
+                    y: 10 + (Math.random() * 5), 
+                    speedFactor: 0.94 + Math.random() * 0.12, // 個体差
+                    isStuck: false,  // 吸着フラグ
+                    finished: false, // 流出完了フラグ
+                    drift: (Math.random()-0.5)*0.3 // 横方向のゆらぎ
+                });
+            }
+            proteinGroups.push({ symbol: char, color: COLORS[i], pI: defaultPI, particles: particles });
+        }
+        
+        // カラム樹脂の極性表示ラベルの更新
+        const resinSelect = document.getElementById('resin-select');
+        const resinLabel = document.getElementById('resin-label');
+        resinLabel.innerText = resinSelect.value === 'cation' ? "陽イオン交換樹脂 (－)" : "陰イオン交換樹脂 (＋)";
+        resinLabel.style.color = resinSelect.value === 'cation' ? CHARGE_BLUE : CHARGE_RED;
+
+        naclParticles = []; 
+        updateAllCharges();
+        draw();
+    }
+
+    /**
+     * pHとpIの差に基づいて各タンパク質の電荷を計算・更新
+     */
+    function updateAllCharges() {
+        const phVal = parseFloat(document.getElementById('ph-input').value);
+        document.getElementById('ph-txt').innerText = phVal.toFixed(1);
+        
+        // メインpHバーのインジケーター位置更新
+        const percent = (phVal - 2) / (12 - 2) * 100;
+        document.getElementById('main-ph-marker').style.left = percent + "%";
+        
+        // 各タンパク質のpIバー上にある「現在のpH」インジケーター位置を更新
+        const markers = document.querySelectorAll('.ph-ref-marker');
+        markers.forEach(m => m.style.left = percent + "%");
+
+        // 電荷の判定ロジック：pH < pIなら正(+)、pH > pIなら負(-)
+        proteinGroups.forEach((group, i) => {
+            const pi = group.pI;
+            const iconEl = document.getElementById(`charge-${i}`);
+            if (phVal < pi - 0.2) { iconEl.innerText = "+"; iconEl.style.color = CHARGE_RED; }
+            else if (phVal > pi + 0.2) { iconEl.innerText = "-"; iconEl.style.color = CHARGE_BLUE; }
+            else { iconEl.innerText = "±"; iconEl.style.color = NEUTRAL_GRAY; }
+        });
+    }
+
+    /** 個別のタンパク質のpIが変更された時の処理 */
+    function updatePI(i, v) { 
+        proteinGroups[i].pI = parseFloat(v); 
+        document.getElementById(`pi-txt-${i}`).innerText = parseFloat(v).toFixed(1); 
+        updateAllCharges();
+    }
+
+    /** フロー（流れ）のON/OFF切り替えとアニメーション開始 */
+    function toggleFlow(s) { isFlowing = s; document.getElementById('cock-handle').style.transform = s ? "rotate(90deg)" : "rotate(0deg)"; if(s) animate(); }
+    
+    /** NaCl溶出ボタン（フローをONにする） */
+    function startElution() { toggleFlow(true); }
+
+    /**
+     * メインの描画・更新関数（1フレームごとの処理）
+     */
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const flowRate = parseFloat(document.getElementById('flow-input').value);
+        const resinType = document.getElementById('resin-select').value;
+        const ph = parseFloat(document.getElementById('ph-input').value);
+        const nacl = parseInt(document.getElementById('nacl-input').value);
+
+        // 背景：液体の流れを表現する波のアニメーション
+        if(isFlowing && flowRate > 0) waveOffset -= flowRate * 4.5;
+        
+        ctx.save();
+        const waveLayers = [{ a: 0.08, p: 0.02, amp: 16, s: 0 }, { a: 0.05, p: 0.04, amp: 10, s: 100 }];
+        waveLayers.forEach(l => {
+            ctx.fillStyle = `rgba(0, 150, 255, ${l.a})`; ctx.beginPath();
+            for(let y=0; y<=480; y+=8) { let x = 50 + Math.sin((y + waveOffset + l.s) * l.p) * l.amp; if(y===0) ctx.moveTo(x-70, y); else ctx.lineTo(x-70, y); }
+            for(let y=480; y>=0; y-=8) { let x = 50 + Math.sin((y + waveOffset + l.s) * l.p) * l.amp; ctx.lineTo(x+70, y); }
+            ctx.fill();
+        });
+        ctx.restore();
+
+        // 樹脂ビーズの描画
+        beads.forEach(b => {
+            const isCation = resinType === 'cation';
+            ctx.fillStyle = isCation ? 'rgba(30, 136, 229, 0.06)' : 'rgba(229, 57, 53, 0.06)';
+            ctx.beginPath(); ctx.arc(b.x, b.y, 18, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = isCation ? CHARGE_BLUE : CHARGE_RED;
+            ctx.font = "bold 13px Arial"; ctx.textAlign="center"; ctx.fillText(isCation?'−':'＋', b.x, b.y+5);
+        });
+
+        // NaCl粒子（塩）の生成と描画
+        if (isFlowing && nacl > 0 && flowRate > 0) { if(Math.random() < (nacl/500) * flowRate) naclParticles.push({x: Math.random()*100, y:0, speed: 4 * flowRate}); }
+        ctx.fillStyle = "#03a9f4";
+        naclParticles.forEach((n, i) => { n.y += n.speed; ctx.beginPath(); ctx.arc(n.x, n.y, 1.5, 0, Math.PI*2); ctx.fill(); if(n.y > 480) naclParticles.splice(i, 1); });
+
+        glowTimer += 0.05;
+
+        // タンパク質粒子の更新と描画
+        proteinGroups.forEach(group => {
+            const diff = ph - group.pI;
+            let charge = (diff > 0.2) ? -1 : (diff < -0.2) ? 1 : 0;
+            let glowColor = (charge === 1) ? CHARGE_RED : (charge === -1) ? CHARGE_BLUE : NEUTRAL_GRAY;
+
+            group.particles.forEach(p => {
+                if (p.finished) return; // すでに外に出た粒子はスキップ
+                
+                if (isFlowing && flowRate > 0) {
+                    // 吸着判定：樹脂の電荷とタンパク質の電荷が逆であれば吸着
+                    let attracted = (resinType === 'cation' && charge === 1) || (resinType === 'anion' && charge === -1);
+                    
+                    // 溶出ロジック：吸着中かつ「塩濃度が低い」かつ「電荷が十分に強い」場合は吸着継続
+                    if (attracted && (nacl / 500) < (Math.abs(diff) / 8 + 0.05)) {
+                        p.isStuck = true;
+                    } else {
+                        // 溶出または非吸着：下に移動
+                        p.isStuck = false;
+                        p.y += BASE_SPEED * flowRate * p.speedFactor;
+                        
+                        // 横方向のランダム移動と壁でのバウンド処理
+                        p.x += (Math.random() - 0.5 + p.drift) * 0.8 * flowRate;
+                        const margin = 6; 
+                        if (p.x < margin) { 
+                            p.x = margin; 
+                            p.drift = Math.abs(p.drift); 
+                        } else if (p.x > 100 - margin) { 
+                            p.x = 100 - margin; 
+                            p.drift = -Math.abs(p.drift); 
+                        }
+                    }
+                }
+                if (p.y > 480) p.finished = true; // カラムの下端に到達
+                
+                // 粒子のビジュアル描画
+                ctx.save();
+                ctx.translate(p.x, p.y);
+                if(p.isStuck) {
+                    // 吸着中の発光（グロー）エフェクト
+                    let op = 0.6 + Math.sin(glowTimer) * 0.4;
+                    ctx.shadowBlur = 8 * op; ctx.shadowColor = glowColor;
+                    ctx.fillStyle = glowColor;
+                    ctx.beginPath(); ctx.arc(0, 0, 4.5, 0, Math.PI*2); ctx.fill();
+                }
+                ctx.fillStyle = group.color;
+                ctx.beginPath(); ctx.arc(0, 0, 3.5, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = "white"; ctx.font = "bold 5px Arial"; ctx.textAlign = "center"; ctx.fillText(group.symbol, 0, 2);
+                ctx.restore();
+            });
+        });
+    }
+
+    /** ブラウザの更新タイミングに合わせて描画を繰り返すループ */
+    function animate() { draw(); requestAnimationFrame(animate); }
+
+    // 各入力UIへのイベントリスナー登録
+    document.getElementById('ph-input').oninput = (e) => updateAllCharges();
+    document.getElementById('nacl-input').oninput = (e) => document.getElementById('nacl-txt').innerText = e.target.value;
+    document.getElementById('flow-input').oninput = (e) => document.getElementById('flow-txt').innerText = parseFloat(e.target.value).toFixed(1) + " x";
+    
+    // 初期化実行
+    initExperiment(); 
+    animate();
+</script>
+</body>
+</html>
